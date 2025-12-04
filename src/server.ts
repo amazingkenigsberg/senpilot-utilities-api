@@ -115,7 +115,7 @@ app.get("/csr-utilities/check-balance", async (req, res) => {
         // Direct data access since it's all in one service now
         const customer =
           identifier === "phone"
-            ? greenleaf_customers.find((c) => c.phone.includes(value as string))
+            ? greenleaf_customers.find((c) => c.contact_primary_phone.includes(value as string))
             : greenleaf_customers.find((c) => c.acct_ref === value);
 
         if (!customer) {
@@ -129,8 +129,8 @@ app.get("/csr-utilities/check-balance", async (req, res) => {
           utility: "GreenLeaf Energy Co.",
           customer_name: `${customer.name_first} ${customer.name_last}`,
           account_number: customer.acct_ref,
-          current_balance: recentBill?.total_due_cents ? recentBill.total_due_cents / 100 : 0,
-          account_status: customer.service_active ? "active" : "inactive",
+          current_balance: recentBill ? recentBill.amount_total_cents / 100 : customer.balance_current_cents / 100,
+          account_status: customer.acct_state === "OK" ? "active" : "inactive",
           meditation_score: customer.meditation_score,
           spiritual_guidance: "Your energy flows with the universe",
           quirky_note: `Plant parent level: ${customer.plant_parent_level}`,
@@ -233,15 +233,15 @@ app.get("/csr-utilities/check-meter", async (req, res) => {
           current_reading: bill.meter_reading_end,
           previous_reading: bill.meter_reading_start,
           usage: bill.kwh_used,
-          read_date: bill.meter_read_date,
+          read_date: bill.bill_date,
         };
         break;
       }
 
       case "aquaflow": {
         const bill = aquaflow_bills
-          .filter((b) => b.account_id === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())[0];
+          .filter((b) => b.account_number === account_number)
+          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())[0];
 
         if (!bill) {
           res.status(404).json({ error: "No meter data found" });
@@ -251,10 +251,10 @@ app.get("/csr-utilities/check-meter", async (req, res) => {
         result = {
           utility: "AquaFlow Municipal Water",
           account_number,
-          current_reading: bill.meter_end_reading,
-          previous_reading: bill.meter_start_reading,
-          usage_gallons: bill.gallons_used,
-          read_date: bill.meter_read_date,
+          current_reading: bill.meter_reading_current,
+          previous_reading: bill.meter_reading_previous,
+          usage_gallons: bill.water_usage_gallons,
+          read_date: bill.statement_date,
         };
         break;
       }
@@ -262,7 +262,7 @@ app.get("/csr-utilities/check-meter", async (req, res) => {
       case "greenleaf": {
         const bill = greenleaf_bills
           .filter((b) => greenleaf_customers.find(c => c.cust_uuid === b.cust_uuid)?.acct_ref === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())[0];
+          .sort((a, b) => new Date(b.generated_date).getTime() - new Date(a.generated_date).getTime())[0];
 
         if (!bill) {
           res.status(404).json({ error: "No meter consciousness detected" });
@@ -272,9 +272,9 @@ app.get("/csr-utilities/check-meter", async (req, res) => {
         result = {
           utility: "GreenLeaf Energy Co.",
           account_number,
-          current_reading: bill.gas_meter_end,
-          previous_reading: bill.gas_meter_start,
-          usage_therms: bill.gas_therms_used,
+          current_reading: bill.gas_meter_reading_curr,
+          previous_reading: bill.gas_meter_reading_prev,
+          usage_therms: bill.gas_usage_therms,
           meter_mood: bill.gas_meter_reader_mood,
           spiritual_message: "Your energy consumption reflects inner balance",
         };
@@ -342,8 +342,8 @@ app.get("/csr-utilities/analyze-meter", async (req, res) => {
 
       case "aquaflow": {
         const bills = aquaflow_bills
-          .filter((b) => b.account_id === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
+          .filter((b) => b.account_number === account_number)
+          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
           .slice(0, 6);
 
         if (bills.length === 0) {
@@ -351,8 +351,8 @@ app.get("/csr-utilities/analyze-meter", async (req, res) => {
           return;
         }
 
-        const avgUsage = bills.reduce((sum, b) => sum + b.gallons_used, 0) / bills.length;
-        const latestUsage = bills[0]?.gallons_used || 0;
+        const avgUsage = bills.reduce((sum, b) => sum + b.water_usage_gallons, 0) / bills.length;
+        const latestUsage = bills[0]?.water_usage_gallons || 0;
 
         result = {
           utility: "AquaFlow Municipal Water",
@@ -368,7 +368,7 @@ app.get("/csr-utilities/analyze-meter", async (req, res) => {
       case "greenleaf": {
         const bills = greenleaf_bills
           .filter((b) => greenleaf_customers.find(c => c.cust_uuid === b.cust_uuid)?.acct_ref === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
+          .sort((a, b) => new Date(b.generated_date).getTime() - new Date(a.generated_date).getTime())
           .slice(0, 6);
 
         if (bills.length === 0) {
@@ -376,7 +376,7 @@ app.get("/csr-utilities/analyze-meter", async (req, res) => {
           return;
         }
 
-        const avgUsage = bills.reduce((sum, b) => sum + b.gas_therms_used, 0) / bills.length;
+        const avgUsage = bills.reduce((sum, b) => sum + b.gas_usage_therms, 0) / bills.length;
 
         result = {
           utility: "GreenLeaf Energy Co.",
@@ -447,8 +447,8 @@ app.get("/csr-utilities/analyze-bills", async (req, res) => {
 
       case "aquaflow": {
         const bills = aquaflow_bills
-          .filter((b) => b.account_id === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
+          .filter((b) => b.account_number === account_number)
+          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
           .slice(0, 6);
 
         if (bills.length === 0) {
@@ -461,11 +461,11 @@ app.get("/csr-utilities/analyze-bills", async (req, res) => {
           account_number,
           total_bills: bills.length,
           bills: bills.map((b) => ({
-            bill_date: b.bill_date,
+            bill_date: b.statement_date,
             due_date: b.due_date,
-            amount_due: b.total_due,
-            gallons_used: b.gallons_used,
-            status: b.paid ? "Paid" : "Pending",
+            amount_due: b.total_charges,
+            gallons_used: b.water_usage_gallons,
+            status: b.payment_status === "paid" ? "Paid" : "Pending",
           })),
         };
         break;
@@ -474,7 +474,7 @@ app.get("/csr-utilities/analyze-bills", async (req, res) => {
       case "greenleaf": {
         const bills = greenleaf_bills
           .filter((b) => greenleaf_customers.find(c => c.cust_uuid === b.cust_uuid)?.acct_ref === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
+          .sort((a, b) => new Date(b.generated_date).getTime() - new Date(a.generated_date).getTime())
           .slice(0, 6);
 
         if (bills.length === 0) {
@@ -488,10 +488,10 @@ app.get("/csr-utilities/analyze-bills", async (req, res) => {
           total_bills: bills.length,
           meditation_minutes_earned: bills.reduce((sum, b) => sum + b.meditation_minutes_earned, 0),
           bills: bills.map((b) => ({
-            bill_date: b.bill_date,
-            due_date: b.due_date,
-            amount_cents: b.total_due_cents,
-            therms_used: b.gas_therms_used,
+            bill_date: b.generated_date,
+            due_date: b.payment_due_date,
+            amount_cents: b.amount_total_cents,
+            therms_used: b.gas_usage_therms,
             meditation_discount: b.gas_mindfulness_discount_cents / 100,
           })),
         };
@@ -560,7 +560,7 @@ app.get("/greenleaf/health", (req, res) => {
 
 app.get("/greenleaf/api/v2/customer/lookup/by-phone", (req, res) => {
   const { phone } = req.query;
-  const customer = greenleaf_customers.find((c) => c.phone === phone);
+  const customer = greenleaf_customers.find((c) => c.contact_primary_phone === phone);
 
   if (!customer) {
     res.status(404).json({
