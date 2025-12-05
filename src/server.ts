@@ -47,6 +47,8 @@ app.get("/health", (req, res) => {
 // Main webhook endpoint for VAPI serverUrl pattern
 // VAPI sends all function calls to this single endpoint
 app.post("/csr-utilities", async (req: express.Request, res: express.Response) => {
+  console.log("[VAPI Webhook] Received request:", JSON.stringify(req.body, null, 2));
+
   const toolCallList = req.body?.message?.toolCallList;
 
   if (!toolCallList || !Array.isArray(toolCallList) || toolCallList.length === 0) {
@@ -55,7 +57,32 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
   }
 
   const toolCall = toolCallList[0];
-  const { id: toolCallId, name: functionName, arguments: args } = toolCall;
+  console.log("[VAPI Webhook] Tool call:", JSON.stringify(toolCall, null, 2));
+
+  // Extract function name and arguments
+  // VAPI might send arguments as a JSON string or nested in function object
+  let functionName: string;
+  let args: any;
+  let toolCallId: string;
+
+  if (toolCall.function) {
+    // OpenAI-style format: { id, function: { name, arguments } }
+    functionName = toolCall.function.name;
+    toolCallId = toolCall.id;
+    // Arguments might be a JSON string
+    args = typeof toolCall.function.arguments === 'string'
+      ? JSON.parse(toolCall.function.arguments)
+      : toolCall.function.arguments;
+  } else {
+    // Direct format: { id, name, arguments }
+    functionName = toolCall.name;
+    toolCallId = toolCall.id;
+    args = typeof toolCall.arguments === 'string'
+      ? JSON.parse(toolCall.arguments)
+      : toolCall.arguments;
+  }
+
+  console.log("[VAPI Webhook] Parsed - Function:", functionName, "Args:", args);
 
   try {
     let result;
