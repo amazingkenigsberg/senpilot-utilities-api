@@ -515,6 +515,8 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
 // Helper to parse VAPI request format and send VAPI response format
 function handleVapiRequest(req: express.Request, res: express.Response, handler: (args: any) => Promise<any>) {
+  console.log("[handleVapiRequest] Received request:", JSON.stringify(req.body, null, 2));
+
   const toolCallList = req.body?.message?.toolCallList;
 
   if (!toolCallList || !Array.isArray(toolCallList) || toolCallList.length === 0) {
@@ -523,7 +525,28 @@ function handleVapiRequest(req: express.Request, res: express.Response, handler:
   }
 
   const toolCall = toolCallList[0];
-  const { id: toolCallId, arguments: args } = toolCall;
+  console.log("[handleVapiRequest] Tool call:", JSON.stringify(toolCall, null, 2));
+
+  // Extract arguments with proper parsing
+  let args: any;
+  let toolCallId: string;
+
+  if (toolCall.function) {
+    // OpenAI-style format: { id, function: { name, arguments } }
+    toolCallId = toolCall.id;
+    // Arguments might be a JSON string
+    args = typeof toolCall.function.arguments === 'string'
+      ? JSON.parse(toolCall.function.arguments)
+      : toolCall.function.arguments;
+  } else {
+    // Direct format: { id, arguments }
+    toolCallId = toolCall.id;
+    args = typeof toolCall.arguments === 'string'
+      ? JSON.parse(toolCall.arguments)
+      : toolCall.arguments;
+  }
+
+  console.log("[handleVapiRequest] Parsed args:", args);
 
   handler(args)
     .then((result) => {
