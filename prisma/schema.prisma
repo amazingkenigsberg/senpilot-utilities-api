@@ -1,0 +1,159 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CSR Utilities - Unified Customer and Bill Tables with Tenant ID
+// ============================================================================
+
+model UtilityTenant {
+  id           String   @id @default(uuid())
+  code         String   @unique // "zapco", "aquaflow", "greenleaf"
+  name         String   // "ZapCo Electric", "AquaFlow Water", etc.
+  type         String   // "electric", "water", "gas"
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  customers UtilityCustomer[]
+  bills     UtilityBill[]
+
+  @@map("utility_tenant")
+}
+
+model UtilityCustomer {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Tenant relationship
+  tenant   UtilityTenant @relation(fields: [tenantId], references: [id])
+  tenantId String        @map("tenant_id")
+
+  // Core fields (common across all tenants)
+  customerId    String  @map("customer_id") // Internal ID like "ZC-001", "AF-1001"
+  accountNumber String  @map("account_number")
+  firstName     String? @map("first_name") // Used by ZapCo
+  lastName      String? @map("last_name") // Used by ZapCo
+  fullName      String? @map("full_name") // Used by AquaFlow
+  phone         String
+  email         String
+  serviceAddress String  @map("service_address")
+  city          String
+  state         String
+  zip           String
+  accountStatus String  @map("account_status")
+  currentBalance Float   @map("current_balance")
+
+  // ZapCo-specific fields
+  ssnLast4            String?   @map("ssn_last4")
+  enrollmentDate      String?   @map("enrollment_date")
+  autopayEnrolled     Boolean?  @map("autopay_enrolled")
+  paperlessBilling    Boolean?  @map("paperless_billing")
+  preferredContact    String?   @map("preferred_contact")
+  vipTier             String?   @map("vip_tier")
+  customerNotes       String?   @map("customer_notes") @db.Text
+  lastPaymentDate     String?   @map("last_payment_date")
+  lastPaymentAmount   Float?    @map("last_payment_amount")
+
+  // AquaFlow-specific fields
+  accountOpened        String? @map("account_opened")
+  accountType          String? @map("account_type")
+  autoPayment          Boolean? @map("auto_payment")
+  emergencyContactName  String? @map("emergency_contact_name")
+  emergencyContactPhone String? @map("emergency_contact_phone")
+  waterHardnessPreference String? @map("water_hardness_preference")
+  specialInstructions  String? @map("special_instructions") @db.Text
+
+  bills UtilityBill[]
+
+  @@unique([tenantId, customerId])
+  @@unique([tenantId, accountNumber])
+  @@index([tenantId])
+  @@index([phone])
+  @@index([accountNumber])
+  @@map("utility_customer")
+}
+
+model UtilityBill {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Tenant relationship
+  tenant   UtilityTenant @relation(fields: [tenantId], references: [id])
+  tenantId String        @map("tenant_id")
+
+  // Customer relationship
+  customer   UtilityCustomer @relation(fields: [customerId], references: [id])
+  customerId String          @map("customer_id")
+
+  // Core fields (common across all tenants)
+  billId         String @map("bill_id")
+  accountNumber  String @map("account_number")
+  billDate       String @map("bill_date")
+  dueDate        String @map("due_date")
+  totalAmount    Float  @map("total_amount")
+  previousBalance Float  @map("previous_balance")
+  currentCharges Float  @map("current_charges")
+  paymentStatus  String @map("payment_status")
+  paidDate       String? @map("paid_date")
+  paidAmount     Float?  @map("paid_amount")
+
+  // Billing period
+  billingPeriodStart String @map("billing_period_start")
+  billingPeriodEnd   String @map("billing_period_end")
+
+  // Meter info
+  meterNumber          String  @map("meter_number")
+  meterReadingStart    Float   @map("meter_reading_start")
+  meterReadingEnd      Float   @map("meter_reading_end")
+  estimatedReading     Boolean? @map("estimated_reading")
+
+  // ZapCo Electric specific fields
+  lateFees               Float? @map("late_fees")
+  kwhUsed                Float? @map("kwh_used")
+  kwhRate                Float? @map("kwh_rate")
+  deliveryCharge         Float? @map("delivery_charge")
+  utilityTax             Float? @map("utility_tax")
+  renewableEnergyCredit  Float? @map("renewable_energy_credit")
+  peakUsageSurcharge     Float? @map("peak_usage_surcharge")
+  weatherAdjustment      Float? @map("weather_adjustment")
+
+  // AquaFlow Water specific fields
+  paymentsReceived       Float?  @map("payments_received")
+  waterUsageGallons      Float?  @map("water_usage_gallons")
+  waterRatePer1000gal    Float?  @map("water_rate_per_1000gal")
+  baseServiceFee         Float?  @map("base_service_fee")
+  sewerCharge            Float?  @map("sewer_charge")
+  stormwaterFee          Float?  @map("stormwater_fee")
+  infrastructureSurcharge Float?  @map("infrastructure_surcharge")
+  latePaymentFee         Float?  @map("late_payment_fee")
+  leakDetected           Boolean? @map("leak_detected")
+  leakDescription        String?  @map("leak_description") @db.Text
+  usageAnomaly           Boolean? @map("usage_anomaly")
+  anomalyNotes           String?  @map("anomaly_notes") @db.Text
+  conservationCredit     Float?  @map("conservation_credit")
+
+  // Notes (both utilities use this)
+  specialNotes String? @map("special_notes") @db.Text
+  statusNotes  String? @map("status_notes") @db.Text
+
+  @@unique([tenantId, billId])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([accountNumber])
+  @@index([billDate])
+  @@map("utility_bill")
+}

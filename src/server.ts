@@ -8,18 +8,14 @@
  * Designed to be deployed separately for easy testing without main repo permissions
  */
 
+import 'dotenv/config';
 import express from "express";
 import cors from "cors";
-import {
-  zapco_customers,
-  zapco_bills,
-  aquaflow_customers,
-  aquaflow_bills,
-} from "./csr-test-database.js";
 import {
   greenleaf_customers,
   greenleaf_bills,
 } from "./greenleaf-database.js";
+import { findCustomer, getBills, getLatestBill } from "./db-helpers.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -97,9 +93,11 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
         switch (utility) {
           case "zapco": {
-            const customer = identifier === "phone"
-              ? zapco_customers.find((c) => c.phone.includes(value as string))
-              : zapco_customers.find((c) => c.account_number === value);
+            const customer = await findCustomer(
+              "zapco",
+              identifier === "phone" ? "phone" : "accountNumber",
+              value as string
+            );
 
             if (!customer) {
               throw Object.assign(new Error("Customer not found"), { status: 404 });
@@ -107,23 +105,27 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
             result = {
               utility: "ZapCo Electric",
-              customer_name: `${customer.first_name} ${customer.last_name}`,
-              account_number: customer.account_number,
-              current_balance: customer.current_balance,
-              account_status: customer.account_status,
+              customer_name: customer.firstName && customer.lastName
+                ? `${customer.firstName} ${customer.lastName}`
+                : customer.fullName,
+              account_number: customer.accountNumber,
+              current_balance: customer.currentBalance,
+              account_status: customer.accountStatus,
               last_payment: {
-                date: customer.last_payment_date,
-                amount: customer.last_payment_amount,
+                date: customer.lastPaymentDate,
+                amount: customer.lastPaymentAmount,
               },
-              autopay: customer.autopay_enrolled,
+              autopay: customer.autopayEnrolled,
             };
             break;
           }
 
           case "aquaflow": {
-            const customer = identifier === "phone"
-              ? aquaflow_customers.find((c) => c.contact_phone.includes(value as string))
-              : aquaflow_customers.find((c) => c.account_number === value);
+            const customer = await findCustomer(
+              "aquaflow",
+              identifier === "phone" ? "phone" : "accountNumber",
+              value as string
+            );
 
             if (!customer) {
               throw Object.assign(new Error("Customer not found"), { status: 404 });
@@ -131,12 +133,12 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
             result = {
               utility: "AquaFlow Municipal Water",
-              customer_name: customer.full_name,
-              account_number: customer.account_number,
-              current_balance: customer.current_balance,
-              account_status: customer.service_status,
-              autopay: customer.auto_payment,
-              quirky_note: customer.water_hardness_preference,
+              customer_name: customer.fullName,
+              account_number: customer.accountNumber,
+              current_balance: customer.currentBalance,
+              account_status: customer.accountStatus,
+              autopay: customer.autoPayment,
+              quirky_note: customer.waterHardnessPreference,
             };
             break;
           }
@@ -218,9 +220,7 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
         switch (utility) {
           case "zapco": {
-            const bill = zapco_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())[0];
+            const bill = await getLatestBill("zapco", account_number);
 
             if (!bill) {
               throw Object.assign(new Error("No meter data found"), { status: 404 });
@@ -229,18 +229,16 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
             result = {
               utility: "ZapCo Electric",
               account_number,
-              current_reading: bill.meter_reading_end,
-              previous_reading: bill.meter_reading_start,
-              usage: bill.kwh_used,
-              read_date: bill.bill_date,
+              current_reading: bill.meterReadingEnd,
+              previous_reading: bill.meterReadingStart,
+              usage: bill.kwhUsed,
+              read_date: bill.billDate,
             };
             break;
           }
 
           case "aquaflow": {
-            const bill = aquaflow_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())[0];
+            const bill = await getLatestBill("aquaflow", account_number);
 
             if (!bill) {
               throw Object.assign(new Error("No meter data found"), { status: 404 });
@@ -249,10 +247,10 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
             result = {
               utility: "AquaFlow Municipal Water",
               account_number,
-              current_reading: bill.meter_reading_current,
-              previous_reading: bill.meter_reading_previous,
-              usage_gallons: bill.water_usage_gallons,
-              read_date: bill.statement_date,
+              current_reading: bill.meterReadingEnd,
+              previous_reading: bill.meterReadingStart,
+              usage_gallons: bill.waterUsageGallons,
+              read_date: bill.billDate,
             };
             break;
           }
@@ -292,17 +290,14 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
         switch (utility) {
           case "zapco": {
-            const bills = zapco_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
-              .slice(0, 6);
+            const bills = await getBills("zapco", account_number, 6);
 
             if (bills.length === 0) {
               throw Object.assign(new Error("No usage history found"), { status: 404 });
             }
 
-            const avgUsage = bills.reduce((sum, b) => sum + b.kwh_used, 0) / bills.length;
-            const latestUsage = bills[0]?.kwh_used || 0;
+            const avgUsage = bills.reduce((sum, b) => sum + (b.kwhUsed || 0), 0) / bills.length;
+            const latestUsage = bills[0]?.kwhUsed || 0;
             const trend = latestUsage > avgUsage * 1.1 ? "increasing" : latestUsage < avgUsage * 0.9 ? "decreasing" : "stable";
 
             result = {
@@ -320,17 +315,14 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
           }
 
           case "aquaflow": {
-            const bills = aquaflow_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
-              .slice(0, 6);
+            const bills = await getBills("aquaflow", account_number, 6);
 
             if (bills.length === 0) {
               throw Object.assign(new Error("No usage history found"), { status: 404 });
             }
 
-            const avgUsage = bills.reduce((sum, b) => sum + b.water_usage_gallons, 0) / bills.length;
-            const latestUsage = bills[0]?.water_usage_gallons || 0;
+            const avgUsage = bills.reduce((sum, b) => sum + (b.waterUsageGallons || 0), 0) / bills.length;
+            const latestUsage = bills[0]?.waterUsageGallons || 0;
 
             result = {
               utility: "AquaFlow Municipal Water",
@@ -380,10 +372,7 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
 
         switch (utility) {
           case "zapco": {
-            const bills = zapco_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
-              .slice(0, 6);
+            const bills = await getBills("zapco", account_number, 6);
 
             if (bills.length === 0) {
               throw Object.assign(new Error("No billing history found"), { status: 404 });
@@ -394,21 +383,18 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
               account_number,
               total_bills: bills.length,
               bills: bills.map((b) => ({
-                bill_date: b.bill_date,
-                due_date: b.due_date,
-                amount_due: b.total_amount_due,
-                kwh_used: b.kwh_used,
-                status: b.payment_status,
+                bill_date: b.billDate,
+                due_date: b.dueDate,
+                amount_due: b.totalAmount,
+                kwh_used: b.kwhUsed,
+                status: b.paymentStatus,
               })),
             };
             break;
           }
 
           case "aquaflow": {
-            const bills = aquaflow_bills
-              .filter((b) => b.account_number === account_number)
-              .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
-              .slice(0, 6);
+            const bills = await getBills("aquaflow", account_number, 6);
 
             if (bills.length === 0) {
               throw Object.assign(new Error("No billing history found"), { status: 404 });
@@ -419,11 +405,11 @@ app.post("/csr-utilities", async (req: express.Request, res: express.Response) =
               account_number,
               total_bills: bills.length,
               bills: bills.map((b) => ({
-                bill_date: b.statement_date,
-                due_date: b.due_date,
-                amount_due: b.total_charges,
-                gallons_used: b.water_usage_gallons,
-                status: b.payment_status === "paid" ? "Paid" : "Pending",
+                bill_date: b.billDate,
+                due_date: b.dueDate,
+                amount_due: b.totalAmount,
+                gallons_used: b.waterUsageGallons,
+                status: b.paymentStatus === "paid" ? "Paid" : "Pending",
               })),
             };
             break;
@@ -589,10 +575,11 @@ app.post("/csr-utilities/check-balance", async (req, res) => {
 
     switch (utility) {
       case "zapco": {
-        const customer =
-          identifier === "phone"
-            ? zapco_customers.find((c) => c.phone.includes(value as string))
-            : zapco_customers.find((c) => c.account_number === value);
+        const customer = await findCustomer(
+          "zapco",
+          identifier === "phone" ? "phone" : "accountNumber",
+          value as string
+        );
 
         if (!customer) {
           const error: any = new Error("Customer not found");
@@ -602,24 +589,27 @@ app.post("/csr-utilities/check-balance", async (req, res) => {
 
         result = {
           utility: "ZapCo Electric",
-          customer_name: `${customer.first_name} ${customer.last_name}`,
-          account_number: customer.account_number,
-          current_balance: customer.current_balance,
-          account_status: customer.account_status,
+          customer_name: customer.firstName && customer.lastName
+            ? `${customer.firstName} ${customer.lastName}`
+            : customer.fullName,
+          account_number: customer.accountNumber,
+          current_balance: customer.currentBalance,
+          account_status: customer.accountStatus,
           last_payment: {
-            date: customer.last_payment_date,
-            amount: customer.last_payment_amount,
+            date: customer.lastPaymentDate,
+            amount: customer.lastPaymentAmount,
           },
-          autopay: customer.autopay_enrolled,
+          autopay: customer.autopayEnrolled,
         };
         break;
       }
 
       case "aquaflow": {
-        const customer =
-          identifier === "phone"
-            ? aquaflow_customers.find((c) => c.contact_phone.includes(value as string))
-            : aquaflow_customers.find((c) => c.account_number === value);
+        const customer = await findCustomer(
+          "aquaflow",
+          identifier === "phone" ? "phone" : "accountNumber",
+          value as string
+        );
 
         if (!customer) {
           const error: any = new Error("Customer not found");
@@ -629,12 +619,12 @@ app.post("/csr-utilities/check-balance", async (req, res) => {
 
         result = {
           utility: "AquaFlow Municipal Water",
-          customer_name: customer.full_name,
-          account_number: customer.account_number,
-          current_balance: customer.current_balance,
-          account_status: customer.service_status,
-          autopay: customer.auto_payment,
-          quirky_note: customer.water_hardness_preference,
+          customer_name: customer.fullName,
+          account_number: customer.accountNumber,
+          current_balance: customer.currentBalance,
+          account_status: customer.accountStatus,
+          autopay: customer.autoPayment,
+          quirky_note: customer.waterHardnessPreference,
         };
         break;
       }
@@ -748,9 +738,7 @@ app.post("/csr-utilities/check-meter", async (req, res) => {
 
     switch (utility) {
       case "zapco": {
-        const bill = zapco_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())[0];
+        const bill = await getLatestBill("zapco", account_number);
 
         if (!bill) {
           const error: any = new Error("No meter data found");
@@ -761,18 +749,16 @@ app.post("/csr-utilities/check-meter", async (req, res) => {
         result = {
           utility: "ZapCo Electric",
           account_number,
-          current_reading: bill.meter_reading_end,
-          previous_reading: bill.meter_reading_start,
-          usage: bill.kwh_used,
-          read_date: bill.bill_date,
+          current_reading: bill.meterReadingEnd,
+          previous_reading: bill.meterReadingStart,
+          usage: bill.kwhUsed,
+          read_date: bill.billDate,
         };
         break;
       }
 
       case "aquaflow": {
-        const bill = aquaflow_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())[0];
+        const bill = await getLatestBill("aquaflow", account_number);
 
         if (!bill) {
           const error: any = new Error("No meter data found");
@@ -783,10 +769,10 @@ app.post("/csr-utilities/check-meter", async (req, res) => {
         result = {
           utility: "AquaFlow Municipal Water",
           account_number,
-          current_reading: bill.meter_reading_current,
-          previous_reading: bill.meter_reading_previous,
-          usage_gallons: bill.water_usage_gallons,
-          read_date: bill.statement_date,
+          current_reading: bill.meterReadingEnd,
+          previous_reading: bill.meterReadingStart,
+          usage_gallons: bill.waterUsageGallons,
+          read_date: bill.billDate,
         };
         break;
       }
@@ -843,10 +829,7 @@ app.post("/csr-utilities/analyze-meter", async (req, res) => {
 
     switch (utility) {
       case "zapco": {
-        const bills = zapco_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
-          .slice(0, 6);
+        const bills = await getBills("zapco", account_number, 6);
 
         if (bills.length === 0) {
           const error: any = new Error("No usage history found");
@@ -854,8 +837,8 @@ app.post("/csr-utilities/analyze-meter", async (req, res) => {
           throw error;
         }
 
-        const avgUsage = bills.reduce((sum, b) => sum + b.kwh_used, 0) / bills.length;
-        const latestUsage = bills[0]?.kwh_used || 0;
+        const avgUsage = bills.reduce((sum, b) => sum + (b.kwhUsed || 0), 0) / bills.length;
+        const latestUsage = bills[0]?.kwhUsed || 0;
         const trend = latestUsage > avgUsage * 1.1 ? "increasing" : latestUsage < avgUsage * 0.9 ? "decreasing" : "stable";
 
         result = {
@@ -873,10 +856,7 @@ app.post("/csr-utilities/analyze-meter", async (req, res) => {
       }
 
       case "aquaflow": {
-        const bills = aquaflow_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
-          .slice(0, 6);
+        const bills = await getBills("aquaflow", account_number, 6);
 
         if (bills.length === 0) {
           const error: any = new Error("No usage history found");
@@ -884,8 +864,8 @@ app.post("/csr-utilities/analyze-meter", async (req, res) => {
           throw error;
         }
 
-        const avgUsage = bills.reduce((sum, b) => sum + b.water_usage_gallons, 0) / bills.length;
-        const latestUsage = bills[0]?.water_usage_gallons || 0;
+        const avgUsage = bills.reduce((sum, b) => sum + (b.waterUsageGallons || 0), 0) / bills.length;
+        const latestUsage = bills[0]?.waterUsageGallons || 0;
 
         result = {
           utility: "AquaFlow Municipal Water",
@@ -952,10 +932,7 @@ app.post("/csr-utilities/analyze-bills", async (req, res) => {
 
     switch (utility) {
       case "zapco": {
-        const bills = zapco_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.bill_date).getTime() - new Date(a.bill_date).getTime())
-          .slice(0, 6);
+        const bills = await getBills("zapco", account_number, 6);
 
         if (bills.length === 0) {
           const error: any = new Error("No billing history found");
@@ -968,21 +945,18 @@ app.post("/csr-utilities/analyze-bills", async (req, res) => {
           account_number,
           total_bills: bills.length,
           bills: bills.map((b) => ({
-            bill_date: b.bill_date,
-            due_date: b.due_date,
-            amount_due: b.total_amount_due,
-            kwh_used: b.kwh_used,
-            status: b.payment_status,
+            bill_date: b.billDate,
+            due_date: b.dueDate,
+            amount_due: b.totalAmount,
+            kwh_used: b.kwhUsed,
+            status: b.paymentStatus,
           })),
         };
         break;
       }
 
       case "aquaflow": {
-        const bills = aquaflow_bills
-          .filter((b) => b.account_number === account_number)
-          .sort((a, b) => new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime())
-          .slice(0, 6);
+        const bills = await getBills("aquaflow", account_number, 6);
 
         if (bills.length === 0) {
           const error: any = new Error("No billing history found");
@@ -995,11 +969,11 @@ app.post("/csr-utilities/analyze-bills", async (req, res) => {
           account_number,
           total_bills: bills.length,
           bills: bills.map((b) => ({
-            bill_date: b.statement_date,
-            due_date: b.due_date,
-            amount_due: b.total_charges,
-            gallons_used: b.water_usage_gallons,
-            status: b.payment_status === "paid" ? "Paid" : "Pending",
+            bill_date: b.billDate,
+            due_date: b.dueDate,
+            amount_due: b.totalAmount,
+            gallons_used: b.waterUsageGallons,
+            status: b.paymentStatus === "paid" ? "Paid" : "Pending",
           })),
         };
         break;
